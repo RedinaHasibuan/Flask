@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dashboard Penjualan Coffee Shop</title>
+  <!-- Script Chart.js Utama -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <!-- Tambahan Script Datalabels untuk Persentase -->
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0"></script>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 0; background: #f8f5f2; color: #332723; }
+    header { background: #4A3022; color: #fff; padding: 16px 24px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; }
+    h1 { font-size: 22px; margin: 0; }
+    select { padding: 6px 12px; border-radius: 6px; border: 1px solid #ccc; font-size: 14px; }
+    main { padding: 24px; display: grid; gap: 16px; grid-template-columns: 1fr 1fr; max-width: 1200px; margin: 0 auto; }
+    @media (max-width: 700px) { main { grid-template-columns: 1fr; } .stat { flex-direction: column; } }
+    .kartu { background: #fff; border-radius: 12px; padding: 20px; box-shadow: 0 4px 6px rgba(0,0,0,.05); border: 1px solid #efeae6; }
+    .stat { display: flex; gap: 16px; grid-column: 1 / -1; }
+    .stat .kartu { flex: 1; text-align: center; }
+    .angka { font-size: 36px; font-weight: bold; color: #A67B5B; margin-bottom: 8px; }
+    .lebar { grid-column: 1 / -1; }
+    h2 { font-size: 16px; margin: 0 0 16px; color: #4A3022; border-bottom: 2px solid #f8f5f2; padding-bottom: 8px; }
+    .grafik { position: relative; height: 260px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>☕ Coffee Shop Sales Dashboard</h1>
+    <label>Pilih Lokasi:
+      <select id="lokasi">
+        <option value="">Semua Cabang</option>
+        {% for l in daftar_lokasi %}
+        <option value="{{ l }}">{{ l }}</option>
+        {% endfor %}
+      </select>
+    </label>
+  </header>
+
+  <main>
+    <section class="stat">
+      <div class="kartu"><div class="angka" id="total_transaksi">-</div>Total Transaksi</div>
+      <div class="kartu"><div class="angka" id="total_pendapatan">-</div>Pendapatan</div>
+      <div class="kartu"><div class="angka" id="rata_qty">-</div>Rata-rata Qty/Order</div>
+    </section>
+
+    <!-- Grafik Baris 1 -->
+    <section class="kartu">
+      <h2>Pendapatan per Kategori Produk</h2>
+      <div class="grafik"><canvas id="grafikKategori"></canvas></div>
+    </section>
+    
+    <section class="kartu">
+      <h2>Top 5 Produk Paling Laris</h2>
+      <div class="grafik"><canvas id="grafikTopProduk"></canvas></div>
+    </section>
+    
+    <!-- Grafik Baris 2 -->
+    <section class="kartu lebar">
+      <h2>Tren Jam Sibuk (Total Cup Terjual)</h2>
+      <div class="grafik"><canvas id="grafikJamSibuk"></canvas></div>
+    </section>
+
+    <section class="kartu lebar">
+      <h2>Tren Pendapatan Harian</h2>
+      <div class="grafik"><canvas id="grafikTren"></canvas></div>
+    </section>
+  </main>
+
+  <script>
+    Chart.defaults.maintainAspectRatio = false;
+    Chart.defaults.font.family = 'system-ui, sans-serif';
+    
+    // Mendaftarkan plugin datalabels secara global, tapi dimatikan secara default 
+    // agar angka tidak menumpuk di semua grafik (hanya dinyalakan di doughnut)
+    Chart.register(ChartDataLabels);
+    Chart.defaults.plugins.datalabels.display = false;
+
+    const grafik = {};
+    const coffeeColors = ["#4A3022", "#A67B5B", "#D2B48C", "#8B5A2B", "#CD853F", "#E6C287", "#3E2723"];
+
+    function gambar(id, config) {
+      if (grafik[id]) grafik[id].destroy();
+      grafik[id] = new Chart(document.getElementById(id), config);
+    }
+
+    async function muatData() {
+      const lokasi = document.getElementById("lokasi").value;
+      const q = lokasi ? "?lokasi=" + encodeURIComponent(lokasi) : "";
+
+      const ringkasan = await (await fetch("/api/ringkasan" + q)).json();
+      document.getElementById("total_transaksi").textContent = ringkasan.total_transaksi.toLocaleString('en-US');
+      document.getElementById("total_pendapatan").textContent = "$" + ringkasan.total_pendapatan.toLocaleString('en-US', {minimumFractionDigits: 2});
+      document.getElementById("rata_qty").textContent = ringkasan.rata_rata_qty;
+
+      const kategori = await (await fetch("/api/pendapatan-kategori" + q)).json();
+      gambar("grafikKategori", {
+        type: "bar",
+        data: { labels: kategori.labels, datasets: [{ label: "Pendapatan", data: kategori.data, backgroundColor: coffeeColors[1], borderRadius: 4 }] },
+        options: { plugins: { legend: { display: false }, tooltip: { callbacks: { label: (ctx) => '$' + ctx.raw.toLocaleString() } } } }
+      });
+
+      const topProduk = await (await fetch("/api/top-produk" + q)).json();
+      gambar("grafikTopProduk", {
+        type: "doughnut",
+        data: { labels: topProduk.labels, datasets: [{ data: topProduk.data, backgroundColor: coffeeColors, borderWidth: 0 }] },
+        options: {
+            plugins: { 
+                legend: { position: 'right' },
+                datalabels: { // Menyalakan dan mengatur format persentase di Doughnut
+                    display: true,
+                    color: '#fff',
+                    font: { weight: 'bold', size: 12 },
+                    formatter: (value, ctx) => {
+                        let sum = ctx.chart.data.datasets[0].data.reduce((a, b) => a + b, 0);
+                        let percentage = (value * 100 / sum).toFixed(1) + "%";
+                        return percentage;
+                    }
+                }
+            }
+        }
+      });
+
+      // Grafik Baru: Area Chart Jam Sibuk
+      const jamSibuk = await (await fetch("/api/jam-sibuk" + q)).json();
+      gambar("grafikJamSibuk", {
+        type: "line",
+        data: { 
+            labels: jamSibuk.labels, 
+            datasets: [{ label: "Cup Terjual", data: jamSibuk.datasets[0].data, borderColor: coffeeColors[3], backgroundColor: 'rgba(139, 90, 43, 0.2)', fill: true, tension: 0.4 }] 
+        },
+        options: { 
+            plugins: { legend: { display: false } },
+            elements: { point: { radius: 3, hitRadius: 10 } }
+        }
+      });
+
+      const tren = await (await fetch("/api/tren-harian" + q)).json();
+      gambar("grafikTren", {
+        type: "line",
+        data: { labels: tren.labels, datasets: [{ label: "Pendapatan Harian", data: tren.datasets[0].data, borderColor: coffeeColors[0], backgroundColor: coffeeColors[0], tension: 0.2 }] },
+        options: { 
+            plugins: { legend: { display: false }, tooltip: { callbacks: { label: (ctx) => '$' + ctx.raw.toLocaleString() } } },
+            elements: { point: { radius: 1, hitRadius: 10 } },
+            scales: { x: { ticks: { maxTicksLimit: 15 } } } 
+        }
+      });
+    }
+
+    document.getElementById("lokasi").addEventListener("change", muatData);
+    muatData();
+  </script>
+</body>
+</html>
